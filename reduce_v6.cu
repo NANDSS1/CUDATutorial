@@ -4,6 +4,7 @@
 
 // multi-block reduce two pass
 // latency: 1.815ms
+/*
 template <int blockSize>
 __device__ void BlockSharedMemReduce(float* smem) {
   if (blockSize >= 1024) {
@@ -59,6 +60,69 @@ __global__ void reduce_v6(float *d_in, float *d_out, int nums){
         sum += d_in[i];
     }
     smem[tid] = sum;
+    __syncthreads();
+    // compute: reduce in shared mem
+    BlockSharedMemReduce<blockSize>(smem);
+
+    // store: write back to global mem
+    if (tid == 0) {
+        d_out[blockIdx.x] = smem[0];
+    }
+}
+*/
+
+template <int blockSize>
+__device__ void BlockSharedMemReduce(float* smem) {
+  if (blockSize >= 1024) {
+    if (threadIdx.x < 512) {
+      smem[threadIdx.x] += smem[threadIdx.x + 512];
+    }
+    __syncthreads();
+  }
+  if (blockSize >= 512) {
+    if (threadIdx.x < 256) {
+      smem[threadIdx.x] += smem[threadIdx.x + 256];
+    }
+    __syncthreads();
+  }
+  if (blockSize >= 256) {
+    if (threadIdx.x < 128) {
+      smem[threadIdx.x] += smem[threadIdx.x + 128];
+    }
+    __syncthreads();
+  }
+  if (blockSize >= 128) {
+    if (threadIdx.x < 64) {
+      smem[threadIdx.x] += smem[threadIdx.x + 64];
+    }
+    __syncthreads();
+  }
+  // the final warp
+  if (threadIdx.x < 32) {
+    volatile float* vshm = smem;
+    if (blockDim.x >= 64) {
+      vshm[threadIdx.x] += vshm[threadIdx.x + 32];
+    }
+    vshm[threadIdx.x] += vshm[threadIdx.x + 16];
+    vshm[threadIdx.x] += vshm[threadIdx.x + 8];
+    vshm[threadIdx.x] += vshm[threadIdx.x + 4];
+    vshm[threadIdx.x] += vshm[threadIdx.x + 2];                                                                                                                                                                                          vshm[threadIdx.x] += vshm[threadIdx.x + 1];
+
+  }
+}  
+
+template <int blockSize>
+__global__ void reduce_v6(float *d_in, float *d_out, int nums){
+    __shared__ float smem[blockSize];
+
+    unsigned int tid = threadIdx.x;
+    unsigned int gtid = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int total_thread_num = blockDim.x * gridDim.x;//总的线程数量
+    float sum = 0.0f;//每个thread分配的一个register
+    for (int32_t i = gtid; i < nums; i += total_thread_num) {
+        sum += d_in[i];//比如第一个线程执行的分别就是gtid gtid+total_thread_num gtid+2*total_thread_num
+    }
+    smem[tid] = sum;//smem还是按照block为单位分配的，一个block独享一个smem数组
     __syncthreads();
     // compute: reduce in shared mem
     BlockSharedMemReduce<blockSize>(smem);

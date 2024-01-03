@@ -11,6 +11,8 @@ __device__ float WarpShuffle(float sum) {
     //__shfl_up_sync: 后面的thread向前面的thread要数据
     //返回前面的thread向后面的thread要的数据，比如__shfl_down_sync(0xffffffff, sum, 16)那就是返回16号线程，17号线程的数据
     //warp内的数据交换不会出现warp在shared memory上交换数据时的不一致现象，无需syncwarp
+    /*__shfl_down_sync（shuffle down sync）是CUDA中的原子内置函数，用于实现SM内的线程之间的数据交换。
+    它可以将一个寄存器中的值"向下"传递到同一个线程块中后面的线程，并将前面的线程中的值"向上"传递到当前线程中。*/
     if (blockSize >= 32)sum += __shfl_down_sync(0xffffffff, sum, 16); // 0-16, 1-17, 2-18, etc.
     if (blockSize >= 16)sum += __shfl_down_sync(0xffffffff, sum, 8);// 0-8, 1-9, 2-10, etc.
     if (blockSize >= 8)sum += __shfl_down_sync(0xffffffff, sum, 4);// 0-4, 1-5, 2-6, etc.

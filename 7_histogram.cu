@@ -26,7 +26,7 @@ int main(){
     int *hist = (int *)malloc(N * sizeof(int));
     int *bin = (int *)malloc(256 * sizeof(int));
     int *bin_data;
-    int *hist_data;
+    int *files.associations;
     cudaMalloc((void **)&bin_data, 256 * sizeof(int));
     cudaMalloc((void **)&hist_data, N * sizeof(int));
 

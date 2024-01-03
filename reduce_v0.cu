@@ -3,6 +3,7 @@
 #include "cuda_runtime.h"
 
 //latency: 3.835ms
+/*
 template<int blockSize>
 __global__ void reduce_v0(float *d_in,float *d_out){
     __shared__ float smem[blockSize];
@@ -15,7 +16,7 @@ __global__ void reduce_v0(float *d_in,float *d_out){
 
     // compute: reduce in shared mem
     // 思考这里是如何并行的
-    for(int index = 1; index < blockDim.x; index *= 2) {
+    for(int index = 1; index < blockDim.x; index *= 2) {//分治
         if (tid % (2 * index) == 0) {
             smem[tid] += smem[tid + index];
         }
@@ -26,7 +27,33 @@ __global__ void reduce_v0(float *d_in,float *d_out){
     if (tid == 0) {
         d_out[blockIdx.x] = smem[0];
     }
+}*/
+
+/*核心思想就是树形分治，主要是要注意sharedmemory的使用*/
+template<int blockSize>
+__global__ void reduce_v0(float* d_in,float* d_out){
+    __shared__ float smen[blockSize];//定义blockSize那么大的sharedmemory
+
+    int tid = threadIdx.x;//定义一个局部线程id
+    int gtid = blockIdx.x * blockSize + threadIdx.x;//定义一个全局线程id gtid = global thread id
+    smem[tid] = d_in[gtid];//第一个block的smen加载完了就加载第二个的，依次类推，smem用tid进行查找对应内存，d_in用gtid查找全局内存
+    __syncthreads();//等待所有线程同步，有些线程快，有些线程慢
+
+    //并行计算
+    for(int index = 1;index < blockDim.x;index *= 2){//分治算法
+        if(tid % (2*index) == 0){
+            smen[tid] += smen[tid+index];//0-1 2-3 4-5 6-7 etc //0-2 4-6 8-10 etc 最后加的index <= blockDimx.x
+        }
+        __syncthreads();//每次计算都要等线程同步
+    }
+
+    if(tid == 0){//这里要用block内的id
+        d_out[blockIdx.x] = smen[0];//每个block sharedmemory的第一位放到d_out里面，d_out的大小就是block的数量
+    }
+
 }
+
+
 bool CheckResult(float *out, float groudtruth, int n){
     float res = 0;
     for (int i = 0; i < n; i++){

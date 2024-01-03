@@ -3,6 +3,11 @@
 #include "cuda_runtime.h"
 
 #define THREAD_PER_BLOCK 256
+
+/*进行了一个完全for展开的操作，但是我不太清楚什么会快了？*/
+/*只要记住一点就行了，for展开肯定比单独写for好*/
+
+/*具体来说，通过条件分支和循环展开，使得在每个条件分支内的指令能够在编译时确定。*/
 // latency: 0.656ms
 template <int blockSize>
 __device__ void BlockSharedMemReduce(float* smem) {

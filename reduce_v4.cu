@@ -4,6 +4,7 @@
 
 
 //latency: 0.694ms
+/*
 __device__ void WarpSharedMemReduce(volatile float* smem, int tid){
     float x = smem[tid];
     if (blockDim.x >= 64) {
@@ -49,6 +50,60 @@ __global__ void reduce_v4(float *d_in,float *d_out){
     // store: write back to global mem
     if (tid == 0) {
         d_out[blockIdx.x] = smem[0];
+    }
+}
+*/
+
+/*优化核心是解决最后一个warp的同步问题，最后一个warp时不需要syncthreads(原语)，syncthreads是同步block里面的所有线程的。
+这一条一句造成了很大的开销，因为同步耗时。*/
+
+__device__ void WarpSharedMemReduce(volatile float* smem, int tid){//volatile确保编译器不会对读写进行优化
+    float x = smem[tid];//定义一个thread专属的寄存器
+    if (blockDim.x >= 64) {
+      x += smem[tid + 32]; __syncwarp();//防止bank conflict
+      smem[tid] = x; __syncwarp();
+    }
+    x += smem[tid + 16]; __syncwarp();
+    smem[tid] = x; __syncwarp();
+    x += smem[tid + 8]; __syncwarp();
+    smem[tid] = x; __syncwarp();
+    x += smem[tid + 4]; __syncwarp();
+    smem[tid] = x; __syncwarp();
+    x += smem[tid + 2]; __syncwarp();
+    smem[tid] = x; __syncwarp();
+    x += smem[tid + 1]; __syncwarp();
+    smem[tid] = x; __syncwarp();
+    //做warp内的分治
+
+
+}
+
+template<int blockSize>
+__global__ void recude_v4(float* d_in,float* d_out){
+    __shared__ float smem[blockSize];
+
+    int tid = threadIdx.x;
+    int gtid = blockIdx.x * (blockSize * 2) + threadIdx.x;
+
+    smem[tid] = d_in[gtid] + d_in[gtid+blockSize];
+    __syncthreads();
+
+    //并行计算
+    for(int s = blockDim.x/2;s > 32;s>>1){
+        if(tid < s){
+            smem[tid] += smem[tid+s];
+        }
+        __syncthreads();
+    }
+    //执行到发生warp divergence之前
+
+    //现在发生了warp divergence了
+    if(tid < 32){
+        WarpSharedMemReduce(smem,tid);
+    }
+
+    if(tid == 0){
+        d_out[blockIdx.x] = smem[0];//sharedmemory写回gloabl memory，这里应该是global memory吧
     }
 }
 

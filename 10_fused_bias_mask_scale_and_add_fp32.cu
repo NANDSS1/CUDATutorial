@@ -7,7 +7,7 @@ struct MaskScaleAndElementwiseAddFunctor {
   MaskScaleAndElementwiseAddFunctor(const uint8_t* mask, const T* add_val, float scale)
       : mask(mask), add_val(add_val), scale(scale) {}
   __device__ T Compute(T x, int64_t i) const {
-    return x * static_cast<T>(static_cast<bool>(mask[i]) * scale) + add_val[i];
+    return x * static_cast<T>(static_cast<bool>(mask[i]) * scale) + add_val[i];//乘上掩码*scale+一个值
   }
   const uint8_t* mask;
   const T* add_val;
@@ -19,7 +19,7 @@ __global__ void FusedBiasAddCUDAKernelFloat(FUNCTOR functor, const int elem_cnt,
                                 const T* x, const T* bias, T* y) {
   for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < elem_cnt;
        i += blockDim.x * gridDim.x){
-    T x_i = x[i] + bias[i % bias_size];
+    T x_i = x[i] + bias[i % bias_size];//多个线程共享一个偏置
     y[i] = functor.Compute(x_i, i);
   }
 }
@@ -56,7 +56,7 @@ int main(){
     int blockSize = 256;
     int gridSize = std::min((ele_cnt + blockSize - 1) / blockSize, maxblocks);
     MaskScaleAndElementwiseAddFunctor<float> mask_scale_and_elementwise_add_func(mask_tensor, add_val, scale);
-    FusedBiasAddCUDAKernelFloat<<<gridSize , blockSize>>>(mask_scale_and_elementwise_add_func, ele_cnt, bias_size, d_x, d_bias, d_y);
+    FusedBiasAddCUDAKernelFloat<<<gridSize , blockSize>>>(mask_scale_and_elementwise_add_func, ele_cnt, bias_size, d_x, d_bias, d_y);//第一个参数是一个结构体，编译器自动推到了FUNCTOR和T
     cudaMemcpy(y, d_y, sizeof(float) * ele_cnt, cudaMemcpyDeviceToHost);
     printf("pass");
     free(x);

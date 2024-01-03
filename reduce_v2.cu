@@ -3,6 +3,7 @@
 #include "cuda_runtime.h"
 
 // latency: 2.300ms
+/*
 template<int blockSize>
 __global__ void reduce_v2(float *d_in,float *d_out){
     __shared__ float smem[blockSize];
@@ -27,6 +28,39 @@ __global__ void reduce_v2(float *d_in,float *d_out){
         d_out[blockIdx.x] = smem[0];
     }
 }
+*/
+
+/*核心就是消除banck conflict 让shared memory可以并行的读取数据*/
+template<int blockSize>
+__global__ void reduce_v2(float* d_in,float* d_out){
+    __shared__ float smem[blockSize];
+    
+    unsigned int tid = threadIdx.x;
+    unsigned int gtid = blockIdx.x * blockDim.x+threadIdx.x//这里blockDim.x和blockSize的值是一样的，blockDim.x就是block在x方向的长度
+
+    smem[tid] = d_int[gtid];
+    __syncthreads;
+
+    for(unsigned int index = blockDim.x/2;index > 0;index >> 1){//倒着来 index>>1表示index = index/2
+        if(tid < index){//第一轮 只有前一半的warp会进入这个分支，第二轮 只有前1/4的warp会进入这个分支，依次类推,不会产生warp divergence
+            smem[tid] = smen[tid+index];//index一起步就取很大，倒着取的
+            //这个也可以做到并行 例如第一轮 tid = 0 tid+index = 128 他们在同一个bank里面
+            //第二轮 tid = 0 tid+index = 64 他们也在同一个bank里面 
+            //第三轮 tid = 0 tid+index =32 他们也在同一个bank里面
+            //有效的消除了bank conflict
+            
+            //存在一个问题就是 如上述所说第一轮 只有前一半的warp会进入这个分支，第二轮 只有前1/4的warp会进入这个分支，其余的warp就闲置了
+        }
+        __syncthreads();
+    }
+
+    if(tid == 0){
+        d_out[blockIdx.x] = smen[0];
+    }
+
+}
+
+
 
 bool CheckResult(float *out, float groudtruth, int n){
     float res = 0;
