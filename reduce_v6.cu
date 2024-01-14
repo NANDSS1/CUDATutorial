@@ -72,7 +72,7 @@ __global__ void reduce_v6(float *d_in, float *d_out, int nums){
 */
 
 template <int blockSize>
-__device__ void BlockSharedMemReduce(float* smem) {
+__device__ void BlockSharedMemReduce(float* smem) {//在block层面进行规约
   if (blockSize >= 1024) {
     if (threadIdx.x < 512) {
       smem[threadIdx.x] += smem[threadIdx.x + 512];
@@ -120,12 +120,12 @@ __global__ void reduce_v6(float *d_in, float *d_out, int nums){
     unsigned int total_thread_num = blockDim.x * gridDim.x;//总的线程数量
     float sum = 0.0f;//每个thread分配的一个register
     for (int32_t i = gtid; i < nums; i += total_thread_num) {
-        sum += d_in[i];//比如第一个线程执行的分别就是gtid gtid+total_thread_num gtid+2*total_thread_num
+        sum += d_in[i];//比如第一个线程执行的分别就是gtid gtid+total_thread_num gtid+2*total_thread_num 小马拉大车，如果在thread的数量分配够的情况下，是一个thread处理一个元素
     }
     smem[tid] = sum;//smem还是按照block为单位分配的，一个block独享一个smem数组
     __syncthreads();
     // compute: reduce in shared mem
-    BlockSharedMemReduce<blockSize>(smem);
+    BlockSharedMemReduce<blockSize>(smem);//对block内的进行规约
 
     // store: write back to global mem
     if (tid == 0) {
@@ -157,7 +157,7 @@ int main(){
     float *d_out;
     float *part_out;//新增part_out存储每个block reduce的结果
     cudaMalloc((void **)&d_out, 1 * sizeof(float));
-    cudaMalloc((void **)&part_out, (gridSize) * sizeof(float));
+    cudaMalloc((void **)&part_out, (gridSize) * sizeof(float));//存储每个block规约的结果
     float groudtruth = N;
 
     for(int i = 0; i < N; i++){
@@ -174,8 +174,8 @@ int main(){
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
     cudaEventRecord(start);
-    reduce_v6<blockSize><<<Grid, Block>>>(d_a, part_out, N);
-    reduce_v6<blockSize><<<1, Block>>>(part_out, d_out, gridSize);
+    reduce_v6<blockSize><<<Grid, Block>>>(d_a, part_out, N);//先分别计算每个block的结果
+    reduce_v6<blockSize><<<1, Block>>>(part_out, d_out, gridSize);//一个block的内进行规约最后输出结果
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
     cudaEventElapsedTime(&milliseconds, start, stop);

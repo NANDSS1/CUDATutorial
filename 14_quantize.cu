@@ -144,6 +144,7 @@ __device__ float gpunearbyint(float a) {
 //}
 
 inline __device__ float atomicMax(float *address, float val) {
+  //cuda不支持fp32的原子max
   int* address_as_i = (int*)address;
   int old = *address_as_i;
   int assumed = 0;
@@ -175,7 +176,7 @@ template<typename T>
 __global__ void ReduceMaxMinPerTensor(const T* input_ptr, const int nums, T* max_ptr,
                                      T* min_ptr, const int channel, const int HW) {
   // dyn shared memory
-  extern __shared__ unsigned char shared_max_min_memory[];
+  extern __shared__ unsigned char shared_max_min_memory[];//使用extern关键字可以在不同的CUDA核函数中引用同一块共享内存，这对于在GPU上进行高效并行计算非常重要。
   T* shared_max = reinterpret_cast<T*>(shared_max_min_memory);
   T* shared_min = shared_max + blockDim.x;
   int total_thread_num = blockDim.x * gridDim.x;
@@ -220,40 +221,41 @@ __global__ void ReduceMaxMinPerChannel(const T* input_ptr, const int nums,
   T* shared_min = shared_max + blockDim.x;
   // block id represent channel id, if block nums < channel nums, we use a loop on 199 and 229 line. 
   int cur_channel = blockIdx.x;
+  //每个block去处理一个channel，如果一个block不能一次cover一个channel，那么就把block的线程按照blocksize的步长进行循环
   int tid = threadIdx.x;
   int gid = blockIdx.x * blockDim.x + tid;
   // get min/max of each channel
   while (cur_channel < num_channels) {
-    shared_max[tid] = FLT_MIN;
-    shared_min[tid] = FLT_MAX;
+    shared_max[tid] = FLT_MIN;//保证可以被更新
+    shared_min[tid] = FLT_MAX;//保证可以被更新
     // thread offset and end offset of each channel
-    int index = (HW * cur_channel) + tid;
-    int end = HW * (cur_channel + 1);
+    int index = (HW * cur_channel) + tid;//计算单个thread需要处理的全局索引
+    int end = HW * (cur_channel + 1);//计算一个channel的end位置
 
     while (index < end && index < nums) {
       shared_max[tid] = max(shared_max[tid], input_ptr[index]);
       shared_min[tid] = min(shared_min[tid], input_ptr[index]);
-      index += blockDim.x;
-    }
-    __syncthreads();
+      index += blockDim.x;//用一个block去cover一个channel，每个thread按照blocksize进行累加
+    }//最后输出的大小就是这个channel每个thread找到的最大值和最小值
+    __syncthreads();//这里是每个线程只访问自己的shared memory，所以不用在循环里面做同步
 
     for (int s = blockDim.x / 2; s > 0; s >>= 1) {
       if (tid < s) {
-        shared_max[tid] = max(shared_max[tid], shared_max[tid + s]);
+        shared_max[tid] = max(shared_max[tid], shared_max[tid + s]);//在block内对每个thread找到的最大值和最小值进行规约
         shared_min[tid] = min(shared_min[tid], shared_min[tid + s]);
       }
-      __syncthreads();
+      __syncthreads();//每次对共享内存操作完都涉及同步的，这里是多个线程对一个线程的sharedmemory进行写入，所以同步在循环内
     }
 
     if (tid == 0) {
-      atomicMax(&max_ptr[cur_channel], shared_max[0]);
+      atomicMax(&max_ptr[cur_channel], shared_max[0]);//把每个通道的最大值和最小值写回去，用原子操作来同步，因为所有block的第一个线程都访问了max_ptr，只能一个访问，其他都要上锁
       atomicMin(&min_ptr[cur_channel], shared_min[0]);
       if(blockIdx.x==0){
         printf("max = %f\n", max_ptr[0]);
         printf("min = %f\n", min_ptr[0]);
       }
     }
-    cur_channel += gridDim.x;
+    cur_channel += gridDim.x;//grid如果一次cover不了所有的线程，那么就按照gridsize的loop进行循环
   }
 }
 
@@ -284,11 +286,11 @@ __global__ void GetScaleAndZPAsymmetric(const T* max_ptr, const T* min_ptr, cons
   int gid = (blockDim.x * blockIdx.x) + tid;
   while (gid < nums) {
     T denominator = static_cast<T>(pow(2.0, quantization_bit)) - 1;
-    T min = -min_ptr[gid];
-    T s = (max_ptr[gid] - min) / denominator;
+    T min = -min_ptr[gid];//先把最小值单独赋值，后面要用的
+    T s = (max_ptr[gid] - min) / denominator;//但是为什么min前面要给负号呢？不是应该直接就用min吗
     scale[gid] = s;
-    zero_point[gid] = -1 * std::nearbyint(min / s);
-    gid += gridDim.x * blockDim.x;
+    zero_point[gid] = -1 * std::nearbyint(min / s);//求一个零点偏移
+    gid += gridDim.x * blockDim.x;//用grid集群去cover所有的min max element，如果这个时候，grid的thread数量小于element_wise，也能cover，小马拉大车
   }
 }
 
@@ -303,7 +305,7 @@ __global__ void QuantizePerChannelSymmetric(const T* in_ptr, const T* scale_ptr,
   T lower_bound = -upper_bound - 1;
 
   while (gid < nums) {
-    int channel_index = gid / HW;
+    int channel_index = gid / HW;//gid是全局的，在第一轮的时候可以这么算channel
     int scale_idx = min(scale_size - 1, channel_index);
     T scale = scale_ptr[scale_idx];
 
@@ -312,7 +314,7 @@ __global__ void QuantizePerChannelSymmetric(const T* in_ptr, const T* scale_ptr,
     out = out < lower_bound ? lower_bound : out;
     out_ptr[gid] = out;
 
-    gid += step;
+    gid += step;//第二轮的第一个id就接在第一轮的最后一个id后面，无缝衔接上了。
   }
 }
 

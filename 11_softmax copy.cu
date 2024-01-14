@@ -39,7 +39,7 @@ float* softmaxCPU(float* input, float* result, int rows, int cols){
 
   return result;
 }
-template <typename T, int VecSize>
+template <typename T, int VecSize>//这个按照sizeof(T)*VecSize的方式对齐，每个变量的起始地址都是sizeof(T)*VecSize的倍数
 struct alignas(sizeof(T) * VecSize) VectorType {
   T val[VecSize];
 };

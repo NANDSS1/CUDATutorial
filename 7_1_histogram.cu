@@ -6,12 +6,13 @@
 template <int blockSize>
 __global__ void histgram(int *hist_data, int *bin_data, int N)
 {
+    //用了shared memory 算一个优化
     __shared__ int cache[256];
     int gtid = blockIdx.x * blockSize + threadIdx.x;
     int tid = threadIdx.x;
     cache[tid] = 0;//每个thread初始化shared mem
     __syncthreads();
-    for (int i = gtid; i < N; i += gridDim.x * blockSize)
+    for (int i = gtid; i < N; i += gridDim.x * blockSize)//小马拉大车
     {
         int val = hist_data[i];//每个单线程计算全局内存中的若干个值
         atomicAdd(&cache[val], 1);

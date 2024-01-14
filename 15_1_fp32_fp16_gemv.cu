@@ -34,10 +34,12 @@ void gemv_kernel(T *vec,
                 T *dst,
                 T *d_dst){
 
+//M行N列的矩阵
     constexpr int N = 2048;//256 * 8
     constexpr int M = 256;
 
 //    initialize<T>(vec, d_vec, mat, d_mat, dst, d_dst, M, N);
+// N列的vec
     vec = (T *)malloc(N * sizeof(T));
     cudaMalloc((void **)&d_vec, N * sizeof(T));
 
@@ -51,7 +53,7 @@ void gemv_kernel(T *vec,
         vec[i] = (T)1;
     }
     for(int i = 0; i < N * M; i++){
-        mat[i] = (T)1;
+        mat[i] = (T)1;//mat展平成一维的
     }
 
     // gemvCPU(mat, vec, dst, M, N);
@@ -62,13 +64,14 @@ void gemv_kernel(T *vec,
     constexpr int THREAD_NUMS = 256;
     constexpr int VEC_SIZE = Vec<T>::size;
     constexpr int VECS_PER_THREAD = (N / THREAD_NUMS) / VEC_SIZE; // 1 for half, 2 for fp32
+    //计算每个线程在一行中需要处理多少个vector，N / THREAD_NUMS是一行中需要多少列的元素给一个thread处理，最后除以一个vecsize，把元素数量转换成vector数量
     DispatchLauncher<VECS_PER_THREAD, VEC_SIZE, THREAD_NUMS>::template launcher<T>(d_mat, d_vec, d_dst, M, N);
 
     CHECK(cudaMemcpy(dst, d_dst, M * sizeof(T), cudaMemcpyDeviceToHost));
     T* groudtruth = (T*)malloc(sizeof(T) * M);
     // gemvCPU(mat, vec, groudtruth, M, N);
     float* fp32_mat = reinterpret_cast<float*>(mat);
-    float* fp32_vec = reinterpret_cast<float*>(vec);
+    float* fp32_vec = reinterpret_cast<float*>(vec);；
     float* fp32_groudtruth = reinterpret_cast<float*>(groudtruth);
     gemvCPU<float>(fp32_mat, fp32_vec, fp32_groudtruth, M, N);
     float* fp32_dst = reinterpret_cast<float*>(dst);
@@ -86,7 +89,7 @@ void gemv_kernel(T *vec,
     free(mat);
     free(dst);
 }
-template void gemv_kernel<float>(float*, float*, float*, float*, float*, float*);
+template void gemv_kernel<float>(float*, float*, float*, float*, float*, float*);//这样声明是为了保证能链接上float对应的模板函数
 template void gemv_kernel<half>(half*, half*, half*, half*, half*, half*);
 
 int main() {

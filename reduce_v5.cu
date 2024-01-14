@@ -36,8 +36,8 @@ __device__ void BlockSharedMemReduce(float* smem) {
     __syncthreads();
   }
   // the final warp
-  if (threadIdx.x < 32) {
-    volatile float* vshm = smem;
+  if (threadIdx.x < 32) {//对前64个数据进行规约
+    volatile float* vshm = smem;//定义一组寄存器
     if (blockDim.x >= 64) {
       vshm[threadIdx.x] += vshm[threadIdx.x + 32];
     }

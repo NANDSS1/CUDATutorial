@@ -3,6 +3,10 @@
 #include <cuda.h>
 #include "cuda_runtime.h"
 
+//warp层面的reduce的优点
+//1、warp divergence不用考虑 warp里面的每个thread都可以控制
+//2、同步的开销很小
+
 #define WarpSize 32
 //latency: 1.254ms
 template <int blockSize>
@@ -13,7 +17,7 @@ __device__ float WarpShuffle(float sum) {
     //warp内的数据交换不会出现warp在shared memory上交换数据时的不一致现象，无需syncwarp
     /*__shfl_down_sync（shuffle down sync）是CUDA中的原子内置函数，用于实现SM内的线程之间的数据交换。
     它可以将一个寄存器中的值"向下"传递到同一个线程块中后面的线程，并将前面的线程中的值"向上"传递到当前线程中。*/
-    if (blockSize >= 32)sum += __shfl_down_sync(0xffffffff, sum, 16); // 0-16, 1-17, 2-18, etc.
+    if (blockSize >= 32)sum += __shfl_down_sync(0xffffffff, sum, 16); // 0-16, 1-17, 2-18, etc. 0xffffffff，选中全部线程，down的以后是往后偏移，0号线程获得16号线程的sum
     if (blockSize >= 16)sum += __shfl_down_sync(0xffffffff, sum, 8);// 0-8, 1-9, 2-10, etc.
     if (blockSize >= 8)sum += __shfl_down_sync(0xffffffff, sum, 4);// 0-4, 1-5, 2-6, etc.
     if (blockSize >= 4)sum += __shfl_down_sync(0xffffffff, sum, 2);// 0-2, 1-3, 4-6, 5-7, etc.
@@ -31,14 +35,15 @@ __global__ void reduce_warp_level(float *d_in,float *d_out, unsigned int n){
 
     for (int i = gtid; i < n; i += total_thread_num)
     {
-        sum += d_in[i];//thread local reduce，一个block/thread处理多个元素
+        sum += d_in[i];//thread local reduce，一个block/thread处理多个元素 
+        //如果不是小马拉大车 sum放的每个thread处理的元素
     }
     
     // partial sums for each warp
-    __shared__ float WarpSums[blockSize / WarpSize]; 
-    const int laneId = tid % WarpSize;
-    const int warpId = tid / WarpSize; 
-    sum = WarpShuffle<blockSize>(sum);
+    __shared__ float WarpSums[blockSize / WarpSize]; //每个warp分配一个数据存储
+    const int laneId = tid % WarpSize;//warp内id
+    const int warpId = tid / WarpSize; //warp的次序
+    sum = WarpShuffle<blockSize>(sum);//把寄存器的值传进这个函数，每个线程都做了这个操作
     if(laneId == 0) {
         WarpSums[warpId] = sum;
     }
@@ -50,7 +55,7 @@ __global__ void reduce_warp_level(float *d_in,float *d_out, unsigned int n){
     sum = (tid < blockSize / WarpSize) ? WarpSums[laneId] : 0;
     // Final reduce using first warp
     if (warpId == 0) {
-        sum = WarpShuffle<blockSize/WarpSize>(sum); 
+        sum = WarpShuffle<blockSize/WarpSize>(sum); //部分线程执行了这个函数
     }
     // write result for this block to global mem
     if (tid == 0) {
